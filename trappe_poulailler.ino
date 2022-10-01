@@ -1,12 +1,24 @@
-#include <Servo.h>
-#include <RTClib.h>
-
 #define USE_SUNSET_LIB
 
 #ifdef USE_SUNSET_LIB
 #include <sunset.h>
 #else
 #include <Dusk2Dawn.h>
+#endif
+
+#define USE_PCF85063TP
+//#define USE_DS1307
+
+#include <Servo.h>
+
+#ifdef USE_DS1307
+#include <RTClib.h>
+RTC_DS1307 rtc;
+#endif
+
+#ifdef USE_PCF85063TP
+#include <PCF85063TP.h>
+PCD85063TP rtc;
 #endif
 
 #define PIN_SERVO 9
@@ -23,10 +35,10 @@ const int OPEN_TIMEOUT = 12000;
 const int UNLOCK_TIMEOUT = 4000;
 const int CLOSE_TIMEOUT = 12000;
 
-#define LAT 45
-#define LON 5.9
+#define LAT 45.23
+#define LON 5.88
 
-#define SUNSET_OFFSET 0
+#define SUNSET_OFFSET 10
 
 enum State
 {
@@ -40,7 +52,8 @@ enum State
   ERROR,
 };
 
-RTC_DS1307 rtc;
+
+
 Servo servo;
 #ifdef USE_SUNSET_LIB
 SunSet location(LAT, LON, 2);
@@ -57,14 +70,29 @@ unsigned long stateTime;
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(57600);
+#ifdef USE_DS1307
   if (! rtc.begin()) {
     Serial.println("Couldn't find RTC");
     while (1);
   }
+#endif
+#ifdef USE_PCF85063TP
+  rtc.begin();
+#endif
 
   // uncomment to set the RTC time
-  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  //rtc.adjust(DateTime(2021, 5, 24, 22, 43, 0));
+#ifdef USE_DS1307
+   //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //rtc.adjust(DateTime(2021, 12, 20, 13, 23, 0));
+#endif
+#ifdef USE_PCF85063TP
+//  rtc.stopClock();
+//  rtc.fillByYMD(2022,10,1);
+//  rtc.fillByHMS(14,35,00);
+//  rtc.fillDayOfWeek(SAT);//Saturday
+//  rtc.setTime();//write time to the RTC chip
+//  rtc.startClock();
+#endif
 
   pinMode(PIN_SWITCH_UP, INPUT_PULLUP);
   pinMode(PIN_SWITCH_DOWN, INPUT_PULLUP);
@@ -83,8 +111,8 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
+#if USE_DS1307
   DateTime now = rtc.now();
-
   Serial.print(now.day(), DEC);
   Serial.print('/');
   Serial.print(now.month(), DEC);
@@ -101,6 +129,27 @@ void loop() {
   Serial.print(':');
   Serial.print(now.second(), DEC);
   Serial.println();
+
+#endif
+
+#ifdef USE_PCF85063TP
+  rtc.getTime();
+
+  Serial.print(rtc.dayOfMonth, DEC);
+  Serial.print('/');
+  Serial.print(rtc.month, DEC);
+  Serial.print('/');
+  Serial.print(rtc.year+2000, DEC);
+  Serial.print(' ');
+  Serial.print(rtc.hour, DEC);
+  Serial.print(':');
+  Serial.print(rtc.minute, DEC);
+  Serial.print(':');
+  Serial.print(rtc.second, DEC);
+  Serial.println();
+  
+#endif
+  
   //  Serial.println();
   //
   //  Serial.print("SunRise : ");
@@ -138,6 +187,8 @@ void loop() {
     case OPENED:
       {
         //DateTime now = rtc.now();
+        
+#if USE_DS1307
         int current_min = 60 * now.hour() + now.minute();
 
 #ifdef USE_SUNSET_LIB
@@ -147,7 +198,22 @@ void loop() {
 #else
         int sunrise = location.sunrise(now.year(), now.month(), now.day(), false);
         int sunset = SUNSET_OFFSET + location.sunset(now.year(), now.month(), now.day(), false);
+#endif
+#endif
+   
+#ifdef USE_PCF85063TP
+        int current_min = 60 * rtc.hour + rtc.minute;
+
+#ifdef USE_SUNSET_LIB
+        location.setCurrentDate(rtc.year, rtc.month, rtc.dayOfMonth);
+        int sunrise = location.calcSunrise();
+        int sunset = SUNSET_OFFSET + location.calcCivilSunset();
+#else
+        int sunrise = location.sunrise(rtc.year()+2000, rtc.month, rtc.dayOfMonth, false);
+        int sunset = SUNSET_OFFSET + location.sunset(rtc.year+2000, rtc.month, rtc.dayOfMonth, false);
 #endif   
+#endif  
+        
         Serial.print("closing scheduled at ");
         Serial.print(sunset/60);
         Serial.print("h");
@@ -178,8 +244,8 @@ void loop() {
       }
       break;
     case UNLOCKING_STEP2:
-      //printState(state);
-      //Serial.println();
+      printState(state);
+      Serial.println();
       unlock();
       stateTime = millis();
       state = CLOSING;
@@ -189,19 +255,22 @@ void loop() {
       }else{
         motorDown();
       }
-      //printState(state);
-      //Serial.println();
+      printState(state);
+      Serial.println();
       break;
     case CLOSING:
       if (millis() - stateTime > CLOSE_TIMEOUT)
       {
-        handleError();
+        motorStop();
+        stateTime = millis();
+        state=CLOSED;
       }
       break;
     case CLOSED:
       {
-        //DateTime now = rtc.now();
+#if USE_DS1307
         int current_min = 60 * now.hour() + now.minute();
+
 #ifdef USE_SUNSET_LIB
         location.setCurrentDate(now.year(), now.month(), now.day());
         int sunrise = location.calcSunrise();
@@ -209,7 +278,21 @@ void loop() {
 #else
         int sunrise = location.sunrise(now.year(), now.month(), now.day(), false);
         int sunset = SUNSET_OFFSET + location.sunset(now.year(), now.month(), now.day(), false);
+#endif   
 #endif
+
+#ifdef USE_PCF85063TP
+        int current_min = 60 * rtc.hour + rtc.minute;
+
+#ifdef USE_SUNSET_LIB
+        location.setCurrentDate(rtc.year, rtc.month, rtc.dayOfMonth);
+        int sunrise = location.calcSunrise();
+        int sunset = SUNSET_OFFSET + location.calcCivilSunset();
+#else
+        int sunrise = location.sunrise(rtc.year()+2000, rtc.month, rtc.dayOfMonth, false);
+        int sunset = SUNSET_OFFSET + location.sunset(rtc.year+2000, rtc.month, rtc.dayOfMonth, false);
+#endif   
+#endif  
 
         Serial.print("Opening scheduled at ");
         Serial.print(sunrise/60);
@@ -237,6 +320,15 @@ void loop() {
       }
       break;
     case ERROR:
+    {
+      if(digitalRead(PIN_SWITCH_MANUAL)==LOW)
+      {
+        state = CLOSED;
+      }else{
+        delay(1000);
+      }
+      break;
+    }
     default:
       delay(1000);
       break;
